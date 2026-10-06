@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AURA CTF :: Stack Smash 01</title>
+<style>
+:root{
+  --bg:#0a0d0a; --fg:#39ff6a; --dim:#1f6b35; --panel:#0f140f;
+  --accent:#ff4747; --warn:#ffd24a; --border:#1d3a22;
+}
+*{box-sizing:border-box;}
+html,body{height:100%;}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:'Courier New',ui-monospace,monospace;
+  margin:0; padding:20px;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  line-height:1.5;
+}
+.wrap{max-width:860px;margin:0 auto;}
+h1{font-size:1.3rem;letter-spacing:2px;color:var(--fg);margin:0 0 4px;}
+.sub{color:var(--dim);font-size:.85rem;margin-bottom:20px;}
+.panel{
+  background:var(--panel); border:1px solid var(--border); border-radius:6px;
+  padding:16px; margin-bottom:16px; overflow-x:auto;
+}
+pre{margin:0;font-size:.82rem;color:#8fe3a8;white-space:pre;overflow-x:auto;}
+.kw{color:#ff79c6;} .ty{color:#8be9fd;} .fn{color:#f1fa8c;} .cm{color:#5c7a63;}
+label{display:block;font-size:.8rem;color:var(--dim);margin-bottom:6px;}
+input[type=text]{
+  width:100%; background:#040604; border:1px solid var(--border); color:var(--fg);
+  font-family:inherit; font-size:.95rem; padding:10px; border-radius:4px;
+}
+.row{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;}
+button{
+  background:var(--dim); color:#eafff0; border:none; padding:10px 16px;
+  border-radius:4px; font-family:inherit; font-size:.85rem; cursor:pointer;
+}
+button:hover{filter:brightness(1.3);}
+button.secondary{background:#222;color:var(--dim);border:1px solid var(--border);}
+#console{
+  background:#040604; border:1px solid var(--border); border-radius:4px;
+  padding:12px; min-height:90px; font-size:.85rem; white-space:pre-wrap;
+  word-break:break-word;
+}
+.flag{color:var(--warn);font-weight:bold;}
+.denied{color:var(--accent);}
+.mem{display:flex;flex-wrap:wrap;gap:4px;margin-top:10px;}
+.cell{
+  width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+  font-size:.65rem;border:1px solid var(--border);border-radius:3px;background:#040604;color:var(--dim);
+}
+.cell.buf{border-color:#1d3a22;}
+.cell.filled{background:#113018;color:var(--fg);}
+.cell.al{border-color:#4a2a1d;color:#8a5a3a;}
+.cell.al.hit{background:#3a1010;color:var(--accent);border-color:var(--accent);}
+.legend{font-size:.7rem;color:var(--dim);margin-top:6px;}
+details{margin-top:10px;}
+summary{cursor:pointer;color:var(--dim);font-size:.82rem;}
+.hintbox{font-size:.82rem;color:#c9d9cd;margin-top:8px;padding-left:10px;border-left:2px solid var(--border);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>&gt;_ AURA{} // STACK SMASH 01</h1>
+  <div class="sub">web sandbox :: simulated x86 stack frame :: find the overflow</div>
+
+  <div class="panel">
+    <pre><span class="cm">// login.c — compiled with no stack protections</span>
+<span class="kw">#include</span> <span class="fn">&lt;stdio.h&gt;</span>
+<span class="kw">#include</span> <span class="fn">&lt;string.h&gt;</span>
+
+<span class="ty">int</span> <span class="fn">main</span>(<span class="ty">void</span>) {
+    <span class="ty">char</span> buffer[16];
+    <span class="ty">int</span>  access_level = 0;   <span class="cm">// adjacent on the stack, right after buffer</span>
+
+    printf(<span class="fn">"Enter your username: "</span>);
+    gets(buffer);               <span class="cm">// no bounds checking!</span>
+
+    <span class="kw">if</span> (access_level != 0) {
+        printf(<span class="fn">"Access granted. Flag: %s\n"</span>, FLAG);
+    } <span class="kw">else</span> {
+        printf(<span class="fn">"Access denied.\n"</span>);
+    }
+    <span class="kw">return</span> 0;
+}</pre>
+  </div>
+
+  <div class="panel">
+    <label>$ ./login</label>
+    <input type="text" id="inp" placeholder="Enter your username:" autocomplete="off" spellcheck="false">
+    <div class="row">
+      <button onclick="run()">Run ▶</button>
+      <button class="secondary" onclick="reset()">Reset</button>
+    </div>
+
+    <div class="mem" id="mem" style="display:none;"></div>
+    <div class="legend" style="display:none;">green = buffer[16] &nbsp;|&nbsp; brown = access_level (4 bytes) &nbsp;|&nbsp; red = overwritten</div>
+
+    <div class="panel" id="console" style="margin-top:14px;">$ waiting for input...</div>
+  </div>
+
+</div>
+
+<script>
+const BUF=16, AL=4;
+const _k9=0x5A, _b7="Gw8IGyFraQVrYwUJFxsJEic=";
+function _x(v=_k9,b=_b7){
+  const bin=atob(b); let out='';
+  for(let i=0;i<bin.length;i++) out+=String.fromCharCode(bin.charCodeAt(i)^v);
+  return out;
+}
+function buildMem(fill,hit){
+  const mem=document.getElementById('mem');
+  mem.innerHTML='';
+  for(let i=0;i<BUF;i++){
+    const c=document.createElement('div');
+    c.className='cell buf'+(i<fill?' filled':'');
+    c.textContent = i<fill ? '●' : '';
+    mem.appendChild(c);
+  }
+  for(let i=0;i<AL;i++){
+    const c=document.createElement('div');
+    const overflowed = fill>BUF && (i < (fill-BUF));
+    c.className='cell al'+(overflowed?' hit':'');
+    c.textContent = overflowed ? '●' : '';
+    mem.appendChild(c);
+  }
+}
+function run(){
+  const val = document.getElementById('inp').value;
+  const out = document.getElementById('console');
+  const len = val.length;
+  buildMem(Math.min(len,BUF+AL));
+
+  if(len===0){
+    out.innerHTML = '$ ./login\nEnter your username: \n<span class="denied">Access denied.</span>';
+    return;
+  }
+
+  const overflow = len - BUF;
+  if(overflow > 0){
+    out.innerHTML =
+      '$ ./login\n'+
+      'Enter your username: '+escapeHtml(val)+'\n'+
+      'buffer[16] filled, '+overflow+' byte(s) spilled into access_level\n'+
+      'access_level overwritten -> non-zero\n'+
+      '<span class="flag">Access granted. Flag: '+_x()+'</span>';
+  } else {
+    out.innerHTML =
+      '$ ./login\n'+
+      'Enter your username: '+escapeHtml(val)+'\n'+
+      '('+len+'/'+BUF+' bytes used, access_level untouched)\n'+
+      '<span class="denied">Access denied.</span>';
+  }
+}
+function reset(){
+  document.getElementById('inp').value='';
+  document.getElementById('console').textContent='$ waiting for input...';
+  buildMem(0);
+}
+function escapeHtml(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')run();});
+buildMem(0);
+</script>
+</body>
+</html>
